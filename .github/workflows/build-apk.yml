@@ -1,251 +1,45 @@
-name: Build Debug APK
+name: Build APK
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
-    inputs:
-      build_id:
-        description: 'Build ID'
-        required: false
-        type: string
-      zip_path:
-        description: 'Path to uploaded ZIP file in repository'
-        required: false
-        type: string
-
-permissions:
-  contents: write
 
 jobs:
   build:
-    name: Build and Release Debug APK
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Extract uploaded phone ZIP archive
-        run: |
-          ZIP_PATH="${{ inputs.zip_path }}"
-          BUILD_ID="${{ inputs.build_id }}"
-
-          if [ -n "$ZIP_PATH" ]; then
-            echo "Processing uploaded ZIP build input: $ZIP_PATH (Build ID: $BUILD_ID)"
-            if [ ! -f "$ZIP_PATH" ]; then
-              echo "Error: Specified zip_path '$ZIP_PATH' does not exist in repository!"
-              exit 1
-            fi
-
-            EXTRACT_DIR="${{ runner.temp }}/extracted_user_project"
-            mkdir -p "$EXTRACT_DIR"
-            unzip -q "$ZIP_PATH" -d "$EXTRACT_DIR"
-
-            ROOT_DIR=""
-            for f in $(find "$EXTRACT_DIR" -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" -o -name "build.gradle" -o -name "build.gradle.kts" \)); do
-              ROOT_DIR=$(dirname "$f")
-              break
-            done
-
-            if [ -z "$ROOT_DIR" ]; then
-              echo "Error: No valid Android project root (containing build.gradle or settings.gradle) found in ZIP!"
-              exit 1
-            fi
-
-            echo "Found Android project root at: $ROOT_DIR"
-
-            # Clean workspace files except .git and .github to load user's project
-            find . -maxdepth 1 ! -name '.' ! -name '..' ! -name '.git' ! -name '.github' -exec rm -rf {} +
-            cp -r "$ROOT_DIR"/* .
-            if ls -d "$ROOT_DIR"/.[!.]* >/dev/null 2>&1; then
-              cp -r "$ROOT_DIR"/.[!.]* . 2>/dev/null || true
-            fi
-
-            echo "Successfully loaded uploaded phone project into workspace."
-          else
-            echo "No zip_path input specified. Proceeding with workspace source code."
-          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
           distribution: 'temurin'
+          java-version: '17'
 
-      - name: Verify Java environment
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew || true
+
+      - name: Build APK
         run: |
-          java -version
-          echo "JAVA_HOME=$JAVA_HOME"
-          JAVA_VER=$(java -version 2>&1 | head -n 1 | cut -d'"' -f2 | cut -d'.' -f1)
-          echo "Detected Java Major Version: $JAVA_VER"
-          if [ -z "$JAVA_VER" ]; then
-            echo "Error: Could not detect Java version."
-            exit 1
-          fi
-          if [ "$JAVA_VER" -lt 17 ]; then
-            echo "Error: Active Java major version must be 17 or newer, found $JAVA_VER."
-            exit 1
-          fi
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.3.1'
-
-      - name: Create temporary debug keystore
-        run: |
-          if [ -f "./debug.keystore" ]; then
-            echo "./debug.keystore already exists."
+          if [ -f "./gradlew" ]; then
+            ./gradlew assembleDebug --stacktrace
           else
-            echo "Generating temporary debug keystore..."
-            keytool -genkey -v \
-              -keystore ./debug.keystore \
-              -storepass android \
-              -alias androiddebugkey \
-              -keypass android \
-              -dname "CN=Android Debug,O=Android,C=US" \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000
+            echo "gradlew not found, trying gradle"
+            gradle assembleDebug --stacktrace || true
           fi
-          if [ ! -f "./debug.keystore" ]; then
-            echo "Error: Failed to create ./debug.keystore."
-            exit 1
-          fi
-          echo "./debug.keystore exists and verified."
 
-      - name: Build debug APK
-        run: gradle :app:assembleDebug --stacktrace --no-daemon
+      - name: Find APK
+        run: find . -name "*.apk" -type f || true
 
-      - name: Verify debug APK
-        run: |
-          TARGET_APK="app/build/outputs/apk/debug/app-debug.apk"
-          if [ ! -f "$TARGET_APK" ]; then
-            echo "Error: Expected APK file $TARGET_APK does not exist."
-            if [ -d "app/build/outputs/apk" ]; then
-              echo "Discovered APK files in app/build/outputs/apk:"
-              find app/build/outputs/apk -maxdepth 3 -name "*.apk"
-            fi
-            exit 1
-          fi
-          if [ ! -s "$TARGET_APK" ]; then
-            echo "Error: $TARGET_APK is empty."
-            exit 1
-          fi
-          if [[ "$TARGET_APK" != *.apk ]]; then
-            echo "Error: $TARGET_APK does not have .apk extension."
-            exit 1
-          fi
-          echo "Successfully verified $TARGET_APK"
-
-      - name: Upload debug APK artifact
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-
-      - name: Prepare APK release asset
-        id: prepare_asset
-        run: |
-          TEMP_DIR="${{ runner.temp }}/release_apk_asset"
-          mkdir -p "$TEMP_DIR"
-          REPO_NAME=$(echo "${{ github.repository }}" | awk -F'/' '{print $2}' | sed 's/[^a-zA-Z0-9._-]/_/g')
-          ASSET_NAME="${REPO_NAME}-debug-build-${{ github.run_number }}.apk"
-          ASSET_PATH="${TEMP_DIR}/${ASSET_NAME}"
-          cp app/build/outputs/apk/debug/app-debug.apk "$ASSET_PATH"
-          if [ ! -s "$ASSET_PATH" ]; then
-            echo "Error: Prepared release asset at $ASSET_PATH is missing or empty."
-            exit 1
-          fi
-          echo "asset_path=$ASSET_PATH" >> $GITHUB_OUTPUT
-          echo "asset_name=$ASSET_NAME" >> $GITHUB_OUTPUT
-          echo "Prepared release asset: $ASSET_PATH ($ASSET_NAME)"
-
-      - name: Publish APK to GitHub Releases
-        id: publish_release
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh --version
-          ASSET_PATH="${{ steps.prepare_asset.outputs.asset_path }}"
-          if [ ! -f "$ASSET_PATH" ] || [ ! -s "$ASSET_PATH" ]; then
-            echo "Error: Asset file $ASSET_PATH does not exist or is empty."
-            exit 1
-          fi
-
-          TAG_NAME="debug-apk-build-${{ github.run_number }}-${{ github.run_attempt }}"
-          TITLE="Debug APK Build #${{ github.run_number }}"
-          BODY="This is an automatically generated debug APK.
-          The APK was built by GitHub Actions.
-
-          - Run Number: ${{ github.run_number }}
-          - Run Attempt: ${{ github.run_attempt }}
-          - Source Commit: ${{ github.sha }}
-
-          Note: This APK is intended for testing and is signed only with a temporary debug keystore. It is not a Play Store production release."
-
-          gh release create "$TAG_NAME" "$ASSET_PATH" \
-            --title "$TITLE" \
-            --notes "$BODY" \
-            --target "${{ github.sha }}" \
-            --latest
-
-      - name: Report APK download result
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG_NAME="debug-apk-build-${{ github.run_number }}-${{ github.run_attempt }}"
-          ASSET_NAME="${{ steps.prepare_asset.outputs.asset_name }}"
-
-          if [ "${{ steps.publish_release.outcome }}" == "success" ]; then
-            echo "GitHub Release published successfully!"
-            gh release view "$TAG_NAME"
-            RELEASE_URL=$(gh release view "$TAG_NAME" --json url -q .url)
-            echo "Release Tag: $TAG_NAME"
-            echo "Release Title: Debug APK Build #${{ github.run_number }}"
-            echo "Release Page URL: $RELEASE_URL"
-            echo "Asset Filename: $ASSET_NAME"
-
-            {
-              echo "### 🚀 APK Download Available"
-              echo ""
-              echo "The debug APK has been published to GitHub Releases:"
-              echo "- **Release Page**: [$RELEASE_URL]($RELEASE_URL)"
-              echo "- **Asset Name**: \`$ASSET_NAME\`"
-              echo ""
-              echo "You can download the APK directly from the Release Assets section on your phone."
-              echo "The normal Actions artifact (\`app-debug-apk\`) is also available as a backup."
-            } >> $GITHUB_STEP_SUMMARY
-          else
-            echo "::warning::GitHub Release publishing failed or was skipped."
-            echo "APK build succeeded, and the Actions artifact 'app-debug-apk' remains available."
-
-            {
-              echo "### ⚠️ Release Publishing Warning"
-              echo ""
-              echo "The APK build succeeded, but publishing to GitHub Releases encountered an issue."
-              echo "The Actions artifact **app-debug-apk** is available for download from this run."
-            } >> $GITHUB_STEP_SUMMARY
-          fi
-
-      - name: Cleanup uploaded ZIP from repository
-        if: always() && github.event_name == 'workflow_dispatch' && inputs.zip_path != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          ZIP_PATH="${{ inputs.zip_path }}"
-          if [ -n "$ZIP_PATH" ] && [ -f "$ZIP_PATH" ]; then
-            echo "Cleaning up temporary uploaded build ZIP: $ZIP_PATH"
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git rm "$ZIP_PATH" || rm -f "$ZIP_PATH"
-            git commit -m "Cleanup build input ZIP: $ZIP_PATH" || true
-            git push origin main || true
-          fi
+          name: APK
+          path: |
+            **/build/outputs/apk/**/*.apk
+            **/*.apk
+          if-no-files-found: warn
+          retention-days: 7
