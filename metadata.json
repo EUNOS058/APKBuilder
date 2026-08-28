@@ -1,0 +1,6 @@
+{
+  "name": "ZIP to APK Builder",
+  "description": "Upload your Android project ZIP and build a real APK using a dedicated Android build worker.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
