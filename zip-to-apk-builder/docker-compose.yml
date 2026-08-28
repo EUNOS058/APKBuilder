@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  android-build-worker:
+    build:
+      context: .
+      dockerfile: build-worker/Dockerfile
+    container_name: zip_to_apk_build_worker
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - MAX_UPLOAD_SIZE=524288000
+      - BUILD_TIMEOUT=600000
+      - BUILD_WORK_DIRECTORY=/app/temp_builds
+      - APK_RETENTION_TIME=3600000
+      - ANDROID_SDK_ROOT=/opt/android-sdk
+    volumes:
+      - ./temp_builds:/app/temp_builds
+      - ./uploads:/app/uploads
+    restart: unless-stopped
