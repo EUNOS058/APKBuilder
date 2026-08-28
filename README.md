@@ -1,79 +1,88 @@
-# APK Builder
+# 📱 Phone-Only ZIP to APK Builder — Beginner Setup & Usage Guide
 
-A real Android application that lets you:
+Build **REAL Android APKs** from source `.zip` archives directly using **ONLY your Android Phone** — **NO PC, NO Laptop, NO local Node.js, and NO Docker required!**
 
-1. Select an Android Studio project ZIP from your phone
-2. Connect to your GitHub account (Personal Access Token)
-3. Upload the project files to a GitHub repository
-4. Automatically create a GitHub Actions workflow
-5. Trigger a real `workflow_dispatch` build
-6. Monitor build status
-7. Download the generated APK artifact
+---
 
-**No fake/mock data.** All GitHub operations use the official REST API.
+## 🏗️ Real Remote ZIP Handoff Architecture
 
-## Requirements
-
-- Android Studio Ladybug (2024.2.1) or newer
-- JDK 17
-- A GitHub account
-- A Personal Access Token with `repo` and `workflow` scopes
-
-## How to open & build
-
-1. Unzip / open this folder in Android Studio
-2. Let Gradle sync
-3. Build → Make Project (or Run on a device/emulator)
-
-## First use on phone
-
-1. Install the APK Builder app
-2. Open **Settings / GitHub** screen
-3. Create a classic Personal Access Token on GitHub:
-   - Go to GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
-   - Generate new token with scopes: `repo`, `workflow`
-4. Paste the token, set username (`EUNOS058` by default), owner, repository name and branch
-5. Tap **Save & Test Connection**
-6. Go to Home → Select a `.zip` of an Android Gradle project
-7. Tap **Upload Project**
-8. Tap **Build APK**
-9. Wait for GitHub Actions to finish (status auto-refreshes)
-10. Download the APK artifact
-
-## Security
-
-- Token is stored using Android EncryptedSharedPreferences (AES256)
-- Token is **never** written into the repository or workflow YAML
-- Token is **never** printed in logs (Authorization header is redacted)
-- Path traversal (`../`) is blocked when reading ZIP files
-- Sensitive files (keystore, local.properties, secrets) are skipped
-
-## Limitations
-
-- Very large projects may hit GitHub API rate limits or file size limits when uploading file-by-file
-- Only debug builds by default (no automatic release signing)
-- Artifact download returns the zip that GitHub Actions uploaded; you may need to extract the `.apk` from it
-
-## Troubleshooting
-
-| Problem | Solution |
-|---------|----------|
-| Authentication failed | Check token scopes and that it is not expired |
-| Repository not found | Create the repo first or check owner/name |
-| Workflow not found | Make sure upload succeeded (workflow file is created) |
-| Build Failed | Open the run on GitHub to see Gradle logs |
-| No artifact | Check that the project actually produced an APK under `build/outputs/apk` |
-
-## Project structure
+Unlike mock systems, this system actually transmits the binary `.zip` file from your phone to the remote compilation environment:
 
 ```
-app/src/main/java/com/apkbuilder/app/
-├── data/github/     # Real GitHub REST API client
-├── data/storage/    # SecureStorage + ZIP FileManager
-├── data/db/         # Room history
-├── ui/screens/      # Compose screens
-├── viewmodel/       # MainViewModel
-└── MainActivity.kt
+[Phone App] 
+    │ 1. Encodes selected ZIP to Base64
+    │ 2. PUT https://api.github.com/repos/{owner}/{repo}/contents/.build-inputs/{buildId}.zip
+    ▼
+[GitHub Repository] Stores .build-inputs/{buildId}.zip
+    │
+    │ 3. Dispatch workflow_dispatch with zip_path: ".build-inputs/{buildId}.zip"
+    ▼
+[GitHub Actions Runner]
+    │ 4. Check out repository with .build-inputs/{buildId}.zip
+    │ 5. Extract ZIP & locate Android project root (settings.gradle / build.gradle)
+    │ 6. Run real Gradle build: gradle :app:assembleDebug
+    │ 7. Verify output: app/build/outputs/apk/debug/app-debug.apk
+    │ 8. Publish APK to GitHub Release assets
+    │ 9. Delete temporary .build-inputs/{buildId}.zip from repository
+    ▼
+[Phone App] Polls run status, receives release asset URL, and downloads real APK directly!
 ```
 
-Built with Kotlin, Jetpack Compose, Material 3, Retrofit, Coroutines, Room, Security-Crypto.
+---
+
+## 🛠️ Option 1: Phone-Only GitHub Actions Setup (Recommended)
+
+You can set up GitHub Actions using only the Chrome/Brave/Firefox browser on your Android phone or the GitHub Mobile app.
+
+### Step 1: Create a GitHub Repository on Phone
+1. Open [github.com](https://github.com) on your phone browser.
+2. Log in and tap **New Repository** (`+` button).
+3. Name your repository (e.g., `my-apk-builder`).
+4. Set visibility to **Public** or **Private**.
+5. Ensure `.github/workflows/build-apk.yml` exists in your repository.
+
+### Step 2: Generate a GitHub Personal Access Token (PAT)
+1. On GitHub Mobile browser, tap your profile picture -> **Settings** -> **Developer Settings**.
+2. Tap **Personal Access Tokens** -> **Tokens (classic)** -> **Generate new token**.
+3. Name it `APK Builder App Token`.
+4. Select scope: `workflow` (and `repo` if private).
+5. Tap **Generate token** and **copy** the token string (`ghp_...`).
+
+### Step 3: Configure the App on your Phone
+1. Launch the **ZIP to APK Builder** app on your phone.
+2. Tap the **Settings (Gear/Cloud Icon)** in the top header.
+3. Select **GitHub Actions Cloud** mode.
+4. Enter your Repository: `your-username/my-apk-builder`.
+5. Paste your PAT in the token field (*Stored safely ONLY on your local device storage, never exposed or hardcoded*).
+6. Tap **Save & Test Connection**. You will see green confirmation **"Remote Build Runner Active"**.
+
+---
+
+## ☁️ Option 2: Free 1-Click Cloud Host Setup (Render / Koyeb)
+
+If you prefer using our hosted Node.js Express backend service:
+
+1. Open [render.com](https://render.com) or [koyeb.com](https://koyeb.com) on your phone browser.
+2. Tap **New Web Service** and select `zip-to-apk-builder` repository.
+3. Render automatically installs dependencies (`npm install`) and starts `npm start`.
+4. Copy your live service URL (e.g., `https://my-cloud-apk-builder.onrender.com/`).
+5. Open the app -> Settings -> Select **Cloud Host API** -> paste your URL -> Tap **Save & Test Connection**.
+
+---
+
+## 📦 How to Build and Download your Real APK from Phone
+
+1. **Select ZIP File**:
+   Tap **Tap to Select ZIP File**. Choose any Android Gradle project `.zip` from your phone storage (e.g. Downloads or Google Drive).
+
+2. **ZIP Verification**:
+   The app automatically inspects the ZIP contents on-device to verify valid Gradle structure (`build.gradle`, `settings.gradle`, `gradlew`, or subfolders).
+
+3. **Start Remote Build**:
+   Select your build variant (`assembleDebug`) and tap **Build APK**.
+
+4. **Monitor Progress & Live Logs**:
+   Watch real compilation progress and live terminal logs streamed directly to your phone screen as the remote cloud worker compiles the project.
+
+5. **Download Real APK**:
+   When complete, you will see **"APK Build Successful"** showing the APK file size. Tap **Download APK** to download the compiled `.apk` directly to your phone's Download folder and install it!
